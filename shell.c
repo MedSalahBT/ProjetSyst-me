@@ -97,6 +97,19 @@ void execute()
 
   if(strcmp(builtin_str[0],elems[0])==0) 
   {
+     if ((strcmp(elems[1], "~")) == 0) {
+            dir = getenv("HOME");
+        }
+ 
+        else  dir =elems[1] ;
+ 
+        int t = chdir(dir);
+        if (t == 0) {
+        dir = getcwd(NULL, 0);
+        }
+ 
+        else
+            printf("\nDirectory change failed.\n");
     chdir(elems[1]);
   }
   else 
