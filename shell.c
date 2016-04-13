@@ -112,20 +112,10 @@ void execute()
 
     if (pid==0) {
     /* XXX fils */
-
-         char repertoire2[50];   
-        // getcwd(repertoire2,sizeof(repertoire2)); 
-        // strcat(repertoire2,"/");
-        // strcat(repertoire2,elems[1]);
-        printf("%s",repertoire2);
-
         execvp(elems[0], /* programme a  executer */
           elems     /* argv du programme a  executer */
           );
         printf("impossible d'execute \"%s\" (%s)\n",elems[0],strerror(errno));
-    char repertoire[50];   
-    getcwd(repertoire,sizeof(repertoire)); 
-    printf("%s\n",repertoire);
     exit(1);
     }
     else {
