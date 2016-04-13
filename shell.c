@@ -1,3 +1,9 @@
+/**************
+
+Miaobing CHEN, Mohamed Salah BEN TAARIT
+
+***************/
+
 #include <sys/types.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -17,9 +23,7 @@ char   ligne[4096];     /* contient la ligne d'entrÃ©e */
 char* elems[MAXELEMS];
 
 char *builtin_str[] = {
-  "cd",
-  "help",
-  "exit"
+  "cd"
 };
 
 
@@ -105,7 +109,7 @@ void execute()
          else  chdir(elems[1]);
     
   }
-  else 
+  else
   {
     pid_t pid;
     if (!elems[0]) return; /* ligne vide */
