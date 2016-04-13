@@ -16,6 +16,12 @@ char   ligne[4096];     /* contient la ligne d'entrÃ©e */
 #define MAXELEMS 32
 char* elems[MAXELEMS];
 
+char *builtin_str[] = {
+  "cd",
+  "help",
+  "exit"
+};
+
 
 void affiche_invite()
 {
@@ -88,27 +94,44 @@ void attent(pid_t pid)
 
 void execute()
 {
-  pid_t pid;
 
-  if (!elems[0]) return; /* ligne vide */
-
-  pid = fork();
-  if (pid < 0) {
-    printf("fork a Ã©chouÃ© (%s)\n",strerror(errno));
-    return;
+  if(strcmp(builtin_str[0],elems[0])==0) 
+  {
+    chdir(elems[1]);
   }
+  else 
+  {
+    pid_t pid;
+    if (!elems[0]) return; /* ligne vide */
 
-  if (pid==0) {
+    pid = fork();
+    if (pid < 0) {
+      printf("fork s'echoue (%s)\n",strerror(errno));
+      return;
+    }
+
+    if (pid==0) {
     /* XXX fils */
-    execvp(elems[0], /* programme Ã  exÃ©cuter */
-	   elems     /* argv du programme Ã  exÃ©cuter */
-	   );
-    printf("impossible d'execute \"%s\" (%s)\n",elems[0],strerror(errno));
+
+         char repertoire2[50];   
+        // getcwd(repertoire2,sizeof(repertoire2)); 
+        // strcat(repertoire2,"/");
+        // strcat(repertoire2,elems[1]);
+        printf("%s",repertoire2);
+
+        execvp(elems[0], /* programme a  executer */
+          elems     /* argv du programme a  executer */
+          );
+        printf("impossible d'execute \"%s\" (%s)\n",elems[0],strerror(errno));
+    char repertoire[50];   
+    getcwd(repertoire,sizeof(repertoire)); 
+    printf("%s\n",repertoire);
     exit(1);
-  }
-  else {
-    /* pÃ¨re */
-    attent(pid);
+    }
+    else {
+      /* pÃ¨re */
+      attent(pid);
+    }
   }
 }
 
