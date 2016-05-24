@@ -115,6 +115,7 @@ job* insertJob(pid_t pid, pid_t ppid, pid_t pgid, char* name,int status);
 job* newJob(pid_t pid, pid_t ppid, pid_t pgid, char* name,int status);
 void printJobs(int flagPs);
 void printStatus(job * job,int * termstatus);
+void delJob();
 void waitJobs();
 void fgJobs();
 void bgJobs();
@@ -123,419 +124,6 @@ void psJobs();
 int stopJob(int pid,int * termstatus);
 void sigchld_handler(int signum);
 
-
-job* insertJob(pid_t pid, pid_t ppid, pid_t pgid, char* name,int status)
-{
-
-    job *tempJob;
-    tempJob=newJob(pid,ppid,pgid,name,status);
-    if (JobList == NULL)
-    {
-        numActiveJobs++;
-        tempJob->id = numActiveJobs;
-        return tempJob;
-    }
-    else
-    {
-        job *tempNode = JobList;
-        while (tempNode->next != NULL)
-        {
-            tempNode = tempNode->next;
-        }
-        tempJob->id = tempNode->id + 1;
-        tempNode->next = tempJob;
-        numActiveJobs++;
-        return JobList;
-    }
-}
-
-job* newJob(pid_t pid, pid_t ppid, pid_t pgid, char* name,int status)
-{
-    job *tempJob = malloc(sizeof(job));
-    tempJob->name = (char*) malloc(sizeof(name));
-    tempJob->name = strcpy(tempJob->name, name);
-    tempJob->pid = pid;
-    tempJob->ppid=ppid;
-    tempJob->pgid = pgid;
-    tempJob->status = status;
-    tempJob->next = NULL;
-    return tempJob;
-}
-
-/*
-  affiche les information de jobs
-  Si flagPs est 0, c'est un commande jobs qui n'affich que le processus de background,
-  sinon c'est ps ,qui affiche tout les processus
-  */
-void printJobs(int flagPs)    
-{
-    job* Job = JobList;
-    if (Job == NULL){printf("~Rien~\n" );return ;}
-    printf("--------------------------------------------------------\n");
-    printf(" %5s   %10s  %5s  %5s  %5s  %6s \n", "  NO", "NAME", "PID" ,"PPID", "PGID", "STATUS");
-    printf("--------------------------------------------------------\n");
-    while (Job != NULL)
-    {
-        if(flagPs==0 && Job->status==FOREGROUND ) continue;  
-        printf("  %5d  %10s  %5d  %5d  %5d  %6c \n", Job->id, Job->name, Job->pid ,Job->ppid,Job->pgid, Job->status);
-        Job = Job->next;
-    }
-    printf("--------------------------------------------------------\n");
-}
-/*
-  fonction pour afficher les status quand il y a un signal 
-  */
-void printStatus(job * job,int * termstatus)
-{
-    if (WIFEXITED(*termstatus))
-    {
-        if (job->status == BACKGROUND)
-        {
-            printf("\n[%d]+  Done\t   %s\n", job->id, job->name);
-        }
-    }
-    else if (WIFSIGNALED(*termstatus))
-    { 
-
-        printf("\n[%d]+  Killed\t   %s\n", job->id, job->name);
-    }
-    else if (WIFSTOPPED(*termstatus))
-    {
-        if(job->status==FOREGROUND)
-        {
-            printf("hello\n" );
-            printf("\n[%d]+   stopped\t   %s\n", numActiveJobs, job->name);
-        }
-    }
-    printf("\n");
-}
-
-
-/*
- fonction supprimer le jobs quand il a été tué ou il a fini
- */
-int delJob(int pid,int * termstatus)
-{   
-    numActiveJobs--;
-    if(JobList->pid==pid && JobList->next==NULL)
-    {
-        printStatus(JobList,termstatus);
-        JobList=NULL;
-        return 1;
-    }
-
-    job * prevJob, * tempJob;
-
-    if(JobList->pid==pid)
-    {
-        tempJob=JobList;
-        JobList=JobList->next;
-        printStatus(tempJob,termstatus);
-        free(tempJob);
-        return 1;
-    }
-    tempJob=JobList->next;
-    prevJob=JobList;
-    while (tempJob != NULL)
-    {
-        if(tempJob->pid==pid)
-        {
-            prevJob->next=tempJob->next;
-            printStatus(tempJob,termstatus);
-            free(tempJob);
-            return 1;
-        }
-        tempJob = tempJob->next;
-    }
-    return 0;
-}
-
-/*
- fonction pour le Ctrl+Z, qui suspend le processus
- */
-int stopJob(int pid,int * termstatus)
-{   
-    job * tempJob=JobList;
-    while (tempJob != NULL)
-    {
-        if(tempJob->pid==pid)
-        {
-            tempJob->status=STOP;
-            printStatus(tempJob,termstatus);
-            return 1;
-        }
-        tempJob = tempJob->next;
-    }
-    return 0;
-}
-
-
-void waitJobs()      //   wait [n]
-{
-  // printf("wait jobs\n");
-  if (elems[1]==NULL){          // wait , qui attend tout les processus de fond
-    job * tempJob=JobList;
-    while (tempJob != NULL)
-    {
-        tempJob->status=FOREGROUND;
-        signal(SIGCHLD, SIG_DFL);
-        int status;
-        waitpid(tempJob->pid,&status,WUNTRACED);
-        tempJob = tempJob->next;
-    }
-    return;
-  }
-
-  if(elems[2]==NULL)            // wait pid
-  {
-    int number=isNumber(elems[1]);
-    if(number!=0)
-    {
-        int temp =0;
-        job * tempJob=JobList;
-        while (tempJob != NULL)
-        {
-            if(tempJob->pid==number)
-            {
-                tempJob->status=FOREGROUND;
-                temp=1;
-                signal(SIGCHLD, SIG_DFL);
-                int status;
-                waitpid(tempJob->pid,&status,WUNTRACED);
-                break;
-            }
-            tempJob = tempJob->next;
-        }
-        if(temp==0) printf("Ce job n'exist pas\n");
-        return;
-    }
-    else printf("Ce job n'exist pas\n");
-      return;
-  }
-  else 
-      printf("Trop de parametre\n");
-  return;
-}
-
-
-void fgJobs()       // fg n ; fg %n
-{
-  printf("fg jobs\n");
-  if (elems[1]==NULL){
-    printf("Ce job n'exist pas\n");return;}
-
-  if(elems[2]==NULL)
-  {
-    int number;
-      if(elems[1][0]=='%')            //  fg %n
-      {   
-            elems[1]++;
-            number=isNumber(elems[1]);
-            if(number != 0)
-            {
-              int temp =0;
-              job * tempJob=JobList;
-              while (tempJob != NULL)
-              {
-                  if(tempJob->id==number)
-                  {
-                      tempJob->status=FOREGROUND;
-                      temp=1;
-                      kill(tempJob->pid,SIGCONT);       // envoyer le signal pour continuer le job
-                      signal(SIGCHLD, SIG_DFL);
-                      tempJob->status=STOP;
-                      int status;
-                      waitpid(tempJob->pid,&status,WUNTRACED);
-                      break;
-                  }
-                  tempJob = tempJob->next;
-              }
-              if(temp==0) printf("Ce job n'exist pas\n");
-              return;
-            }
-            else printf("Ce job n'exist pas\n");
-      }
-      else if(isNumber(elems[1]))         // fg pid
-            {
-              number=isNumber(elems[1]);
-              int temp =0;
-              job * tempJob=JobList;
-              while (tempJob != NULL)
-              {
-                  if(tempJob->pid==number)
-                  {
-                      tempJob->status=FOREGROUND;
-                      temp=1;
-                      kill(tempJob->pid,SIGCONT);
-                      signal(SIGCHLD, SIG_DFL);
-                      tempJob->status=STOP;
-                      int status;
-                      waitpid(tempJob->pid,&status,WUNTRACED);
-                      break;
-                  }
-                  tempJob = tempJob->next;
-              }
-              if(temp == 0)printf("Ce job n'exist pas\n");
-              return;
-            }
-      else 
-        printf("les parametres ne sont pas correct\n"); 
-  }
-  else 
-    printf("Trop de parametre\n");
-  return;
-
-}
-
-void bgJobs()       //  bg n ; bg %n
-{
-  printf("bg jobs\n");
-  if (elems[1]==NULL){
-    printf("Ce job n'exist pas\n");return;}
-
-  if(elems[2]==NULL)
-  {
-      int number;
-      if(elems[1][0]=='%')        //  bg %n
-      {   
-            elems[1]++;
-            number=isNumber(elems[1]);
-            if(number != 0)
-            {
-              int temp =0;
-              job * tempJob=JobList;
-              while (tempJob != NULL)
-              {
-                  if(tempJob->id==number)
-                  {
-                      tempJob->status=FOREGROUND;
-                      temp=1;
-                      kill(tempJob->pid,SIGCONT);
-                      signal(SIGCHLD, SIG_DFL);
-                      tempJob->status=BACKGROUND;
-                  }
-                  tempJob = tempJob->next;
-              }
-              if(temp == 0)printf("Ce job n'exist pas\n");
-              return;
-            }
-            else printf("Ce job n'exist pas\n");
-      }
-      else if(isNumber(elems[1]))   // bg pid
-            {
-              number=isNumber(elems[1]);
-              int temp =0;
-              job * tempJob=JobList;
-              while (tempJob != NULL)
-              {
-                  if(tempJob->pid==number)
-                  {
-                      tempJob->status=FOREGROUND;
-                      temp=1;
-                      kill(tempJob->pid,SIGCONT);
-                      signal(SIGCHLD, SIG_DFL);
-                      tempJob->status=BACKGROUND;
-                  }
-                  tempJob = tempJob->next;
-              }
-              if(temp == 0)printf("Ce job n'exist pas\n");
-              return;
-            }
-      else 
-        printf("les parametres ne sont pas correct\n"); 
-  }
-  else 
-    printf("Trop de parametre\n");
-  return;
-}
-
-
-void killJobs()     // kill pid
-{ 
-  printf("kill jobs\n");
-  if (elems[1]==NULL){
-    printf("Ce job n'exist pas\n");return;}
-
-  if(elems[2]==NULL)
-  {
-    int number=isNumber(elems[1]);
-    printf("%s ：%d\n",elems[1],number );
-    if(number!=0)
-    {
-        int temp =0;
-        job * tempJob=JobList;
-        while (tempJob != NULL)
-        {
-            if(tempJob->pid==number)
-            {
-                tempJob->status=FOREGROUND;
-                temp=1;
-                signal(SIGCHLD, SIG_DFL);
-                kill(tempJob->pid,SIGTERM);
-                break;
-            }
-            tempJob = tempJob->next;
-        }
-        if(temp==0) printf("Ce job n'exist pas\n");
-        return;
-    }
-    else printf("Ce job n'exist pas\n");
-      return;
-  }
-  else 
-      printf("Trop de parametre\n");
-  return;
-}
-
-/*
-  pour obtenir le signal ,en particulier le processus parent se termine avant le fils 
-  */
-void sigchld_handler(int signum)    
-{
-    printf("sigchild handler\n");
-    int ppid=-1;
-     int termstatus;
-    if((ppid=waitpid(-1,&termstatus,WNOHANG|WUNTRACED))>0)
-    {
-      if(WIFSTOPPED(termstatus))  stopJob(ppid,&termstatus);
-      else   delJob(ppid,&termstatus); 
-    } 
-    tcsetpgrp(shell_terminal,shell_pgid);
-}
-
-/*
-  initialiser l'statut
-  */
-void init()
-{
-    shell_pid = getpid();
-    shell_terminal = STDIN_FILENO;
-    is_shell_interactive = isatty(shell_terminal);
-    if (is_shell_interactive)
-    {
-        while (tcgetpgrp(shell_terminal) != (shell_pgid = getpgrp()))
-            kill(shell_pid, SIGTTIN);
-        signal(SIGQUIT, SIG_IGN);     //au debut , on ignore tout les signaux
-        signal(SIGTTOU, SIG_IGN);
-        signal(SIGTTIN, SIG_IGN);
-        signal(SIGTSTP, SIG_IGN);  
-        signal(SIGINT, SIG_IGN);
-        signal(SIGCHLD,&sigchld_handler);
-        setpgid(shell_pid, shell_pid);
-        shell_pgid = getpgrp();
-        if (shell_pid != shell_pgid)
-        {
-            printf("Error, the shell is not process group leader");
-            exit(EXIT_FAILURE);
-        }
-        tcsetpgrp(shell_terminal, shell_pgid);
-    }
-    else
-    {
-        printf("Could not make SHELL interactive. Exiting..\n");
-        exit(EXIT_FAILURE);
-    }
-}
 
 int main()
 {
@@ -709,14 +297,17 @@ void commande_basic(char** commande){
     return;
   }
   else
-    printf("Path de %s: %s\n", commande[0], filename);
-
+    printf("Path de %s: %s\n", commande[0], filename);      //  Attention: cen effet ,c'est exactement sur le screem : stdout. 
+                                                            //  Par example: cat toto | grep l 
+                                                            //  Les donné de la sortie de Cat contient le pharse "Path de Cat" ,
+                                                            //  et il est une partie de l'entrée du Grep
+                                                    
 
   int bg = isBackground(commande);
   /*
     Si c'est un tache de fond(background), on mettre le processus parent ignore le signal de fils. 
       Et c'est obligatoire pour éviter le processus zombie.
-      L'autre facon : pn ajouter un signal_handler à processus de fils
+      L'autre facon : on ajoute un signal_handler à processus de fils
   // */  
   if (bg == 1)
     {    
@@ -724,7 +315,7 @@ void commande_basic(char** commande){
         // signal(SIGCHLD, SIG_IGN);      
     }
   else
-    signal(SIGCHLD, SIG_DFL);          // pour le parent surveille le fils ( le fonction wait)  
+    signal(SIGCHLD, SIG_DFL);          // pour le parent surveille le fils ( le fonction waitpid )  
 
     child_pid = fork();
     if (child_pid < 0) {
@@ -803,7 +394,6 @@ void redirection(char** commande)
     }
     close(fid);
     return;
-
 }
 
 /*
@@ -1212,7 +802,7 @@ int decoupe_pipe(){
   on suppose les commandes : commande1 | commande2 | command3 ...
   */
 void commande_normal() {
-  printf("pipe %d\n", flag_pipe);
+  // printf("pipe %d\n", flag_pipe);
   int flag=decoupe_pipe();
   if(flag == 0) {commande_basic(elems);return;}   // le premiere commande (grande-grande-fils), commande1
 
@@ -1262,6 +852,426 @@ void commande_normal() {
   }
 
 }
+
+job* insertJob(pid_t pid, pid_t ppid, pid_t pgid, char* name,int status)
+{
+
+    job *tempJob;
+    tempJob=newJob(pid,ppid,pgid,name,status);
+    if (JobList == NULL)
+    {
+        numActiveJobs++;
+        tempJob->id = numActiveJobs;
+        return tempJob;
+    }
+    else
+    {
+        job *tempNode = JobList;
+        while (tempNode->next != NULL)
+        {
+            tempNode = tempNode->next;
+        }
+        tempJob->id = tempNode->id + 1;
+        tempNode->next = tempJob;
+        numActiveJobs++;
+        return JobList;
+    }
+}
+
+job* newJob(pid_t pid, pid_t ppid, pid_t pgid, char* name,int status)
+{
+    job *tempJob = malloc(sizeof(job));
+    tempJob->name = (char*) malloc(sizeof(name));
+    tempJob->name = strcpy(tempJob->name, name);
+    tempJob->pid = pid;
+    tempJob->ppid=ppid;
+    tempJob->pgid = pgid;
+    tempJob->status = status;
+    tempJob->next = NULL;
+    return tempJob;
+}
+
+/*
+  affiche les information de jobs
+  Si flagPs est 0, c'est un commande jobs qui n'affich que le processus de background,
+  sinon c'est ps ,qui affiche tout les processus
+  */
+void printJobs(int flagPs)    
+{
+    job* Job = JobList;
+    if (Job == NULL){printf("~Rien~\n" );return ;}
+    printf("--------------------------------------------------------\n");
+    printf(" %5s   %10s  %5s  %5s  %5s  %6s \n", "  NO", "NAME", "PID" ,"PPID", "PGID", "STATUS");
+    printf("--------------------------------------------------------\n");
+    while (Job != NULL)
+    {
+        if(flagPs==0 && Job->status==FOREGROUND ) continue;  
+        printf("  %5d  %10s  %5d  %5d  %5d  %6c \n", Job->id, Job->name, Job->pid ,Job->ppid,Job->pgid, Job->status);
+        Job = Job->next;
+    }
+    printf("--------------------------------------------------------\n");
+}
+/*
+  fonction pour afficher les status quand il y a un signal 
+  */
+void printStatus(job * job,int * termstatus)
+{
+    if (WIFEXITED(*termstatus))
+    {
+        if (job->status == BACKGROUND)
+        {
+            printf("\n[%d]+  Done\t   %s\n", job->id, job->name);
+        }
+    }
+    else if (WIFSIGNALED(*termstatus))
+    { 
+
+        printf("\n[%d]+  Killed\t   %s\n", job->id, job->name);
+    }
+    else if (WIFSTOPPED(*termstatus))
+    {
+        if(job->status==FOREGROUND)
+        {
+            printf("hello\n" );
+            printf("\n[%d]+   stopped\t   %s\n", numActiveJobs, job->name);
+        }
+    }
+    printf("\n");
+}
+
+
+/*
+ fonction supprimer le jobs quand il a été tué ou il a fini
+ */
+void delJob(int pid,int * termstatus)
+{   
+    if(JobList==NULL) return ;
+    numActiveJobs--;
+    if(JobList->pid==pid && JobList->next==NULL)
+    {
+        printStatus(JobList,termstatus);
+        JobList=NULL;
+        return ;
+    }
+
+    job * prevJob, * tempJob;
+
+    if(JobList->pid==pid)
+    {
+        tempJob=JobList;
+        JobList=JobList->next;
+        printStatus(tempJob,termstatus);
+        free(tempJob);
+        return ;
+    }
+    tempJob=JobList->next;
+    prevJob=JobList;
+    while (tempJob != NULL)
+    {
+        if(tempJob->pid==pid)
+        {
+            prevJob->next=tempJob->next;
+            printStatus(tempJob,termstatus);
+            free(tempJob);
+            return ;
+        }
+        tempJob = tempJob->next;
+    }
+    return ;
+}
+
+/*
+ fonction pour le Ctrl+Z, qui suspend le processus
+ */
+int stopJob(int pid,int * termstatus)
+{   
+    job * tempJob=JobList;
+    while (tempJob != NULL)
+    {
+        if(tempJob->pid==pid)
+        {
+            tempJob->status=STOP;
+            printStatus(tempJob,termstatus);
+            return 1;
+        }
+        tempJob = tempJob->next;
+    }
+    return 0;
+}
+
+
+void waitJobs()      //   wait [n]
+{
+  // printf("wait jobs\n");
+  if (elems[1]==NULL){          // wait , qui attend tout les processus de fond
+    job * tempJob=JobList;
+    while (tempJob != NULL)
+    {
+        tempJob->status=FOREGROUND;
+        signal(SIGCHLD, SIG_DFL);
+        int status;
+        waitpid(tempJob->pid,&status,WUNTRACED);
+        tempJob = tempJob->next;
+    }
+    return;
+  }
+
+  if(elems[2]==NULL)            // wait pid
+  {
+    int number=isNumber(elems[1]);
+    if(number!=0)
+    {
+        int temp =0;
+        job * tempJob=JobList;
+        while (tempJob != NULL)
+        {
+            if(tempJob->pid==number)
+            {
+                tempJob->status=FOREGROUND;
+                temp=1;
+                signal(SIGCHLD, SIG_DFL);
+                int status;
+                waitpid(tempJob->pid,&status,WUNTRACED);
+                break;
+            }
+            tempJob = tempJob->next;
+        }
+        if(temp==0) printf("Ce job n'exist pas\n");
+        return;
+    }
+    else printf("Ce job n'exist pas\n");
+      return;
+  }
+  else 
+      printf("Trop de parametre\n");
+  return;
+}
+
+
+void fgJobs()       // fg n ; fg %n
+{
+  printf("fg jobs\n");
+  if (elems[1]==NULL){
+    printf("Ce job n'exist pas\n");return;}
+
+  if(elems[2]==NULL)
+  {
+    int number;
+      if(elems[1][0]=='%')            //  fg %n
+      {   
+            elems[1]++;
+            number=isNumber(elems[1]);
+            if(number != 0)
+            {
+              int temp =0;
+              job * tempJob=JobList;
+              while (tempJob != NULL)
+              {
+                  if(tempJob->id==number)
+                  {
+                      tempJob->status=FOREGROUND;
+                      temp=1;
+                      kill(tempJob->pid,SIGCONT);       // envoyer le signal pour continuer le job
+                      signal(SIGCHLD, SIG_DFL);
+                      tempJob->status=STOP;
+                      int status;
+                      waitpid(tempJob->pid,&status,WUNTRACED);
+                      break;
+                  }
+                  tempJob = tempJob->next;
+              }
+              if(temp==0) printf("Ce job n'exist pas\n");
+              return;
+            }
+            else printf("Ce job n'exist pas\n");
+      }
+      else if(isNumber(elems[1]))         // fg pid
+            {
+              number=isNumber(elems[1]);
+              int temp =0;
+              job * tempJob=JobList;
+              while (tempJob != NULL)
+              {
+                  if(tempJob->pid==number)
+                  {
+                      tempJob->status=FOREGROUND;
+                      temp=1;
+                      kill(tempJob->pid,SIGCONT);
+                      signal(SIGCHLD, SIG_DFL);
+                      tempJob->status=STOP;
+                      int status;
+                      waitpid(tempJob->pid,&status,WUNTRACED);
+                      break;
+                  }
+                  tempJob = tempJob->next;
+              }
+              if(temp == 0)printf("Ce job n'exist pas\n");
+              return;
+            }
+      else 
+        printf("les parametres ne sont pas correct\n"); 
+  }
+  else 
+    printf("Trop de parametre\n");
+  return;
+
+}
+
+void bgJobs()       //  bg n ; bg %n
+{
+  printf("bg jobs\n");
+  if (elems[1]==NULL){
+    printf("Ce job n'exist pas\n");return;}
+
+  if(elems[2]==NULL)
+  {
+      int number;
+      if(elems[1][0]=='%')        //  bg %n
+      {   
+            elems[1]++;
+            number=isNumber(elems[1]);
+            if(number != 0)
+            {
+              int temp =0;
+              job * tempJob=JobList;
+              while (tempJob != NULL)
+              {
+                  if(tempJob->id==number)
+                  {
+                      tempJob->status=FOREGROUND;
+                      temp=1;
+                      kill(tempJob->pid,SIGCONT);
+                      signal(SIGCHLD, SIG_DFL);
+                      tempJob->status=BACKGROUND;
+                  }
+                  tempJob = tempJob->next;
+              }
+              if(temp == 0)printf("Ce job n'exist pas\n");
+              return;
+            }
+            else printf("Ce job n'exist pas\n");
+      }
+      else if(isNumber(elems[1]))   // bg pid
+            {
+              number=isNumber(elems[1]);
+              int temp =0;
+              job * tempJob=JobList;
+              while (tempJob != NULL)
+              {
+                  if(tempJob->pid==number)
+                  {
+                      tempJob->status=FOREGROUND;
+                      temp=1;
+                      kill(tempJob->pid,SIGCONT);
+                      signal(SIGCHLD, SIG_DFL);
+                      tempJob->status=BACKGROUND;
+                  }
+                  tempJob = tempJob->next;
+              }
+              if(temp == 0)printf("Ce job n'exist pas\n");
+              return;
+            }
+      else 
+        printf("les parametres ne sont pas correct\n"); 
+  }
+  else 
+    printf("Trop de parametre\n");
+  return;
+}
+
+
+void killJobs()     // kill pid
+{ 
+  printf("kill jobs\n");
+  if (elems[1]==NULL){
+    printf("Ce job n'exist pas\n");return;}
+
+  if(elems[2]==NULL)
+  {
+    int number=isNumber(elems[1]);
+    printf("%s ：%d\n",elems[1],number );
+    if(number!=0)
+    {
+        int temp =0;
+        job * tempJob=JobList;
+        while (tempJob != NULL)
+        {
+            if(tempJob->pid==number)
+            {
+                tempJob->status=FOREGROUND;
+                temp=1;
+                signal(SIGCHLD, SIG_DFL);
+                kill(tempJob->pid,SIGTERM);
+                break;
+            }
+            tempJob = tempJob->next;
+        }
+        if(temp==0) printf("Ce job n'exist pas\n");
+        return;
+    }
+    else printf("Ce job n'exist pas\n");
+      return;
+  }
+  else 
+      printf("Trop de parametre\n");
+  return;
+}
+
+/*
+  pour obtenir le signal ,en particulier le processus parent se termine avant le fils 
+  */
+void sigchld_handler(int signum)    
+{
+    // printf("sigchild handler\n");
+    int ppid=-1;
+     int termstatus;
+    if((ppid=waitpid(-1,&termstatus,WNOHANG|WUNTRACED))>0)
+    {
+      if(WIFSTOPPED(termstatus))  stopJob(ppid,&termstatus);
+      else   delJob(ppid,&termstatus); 
+    } 
+    tcsetpgrp(shell_terminal,shell_pgid);
+}
+
+/*
+  initialiser l'statut
+  */
+void init()
+{
+    shell_pid = getpid();
+    shell_terminal = STDIN_FILENO;
+    is_shell_interactive = isatty(shell_terminal);
+    if (is_shell_interactive)
+    {
+        while (tcgetpgrp(shell_terminal) != (shell_pgid = getpgrp()))
+            kill(shell_pid, SIGTTIN);
+        signal(SIGQUIT, SIG_IGN);     //au debut , on ignore tout les signaux
+        signal(SIGTTOU, SIG_IGN);
+        signal(SIGTTIN, SIG_IGN);
+        signal(SIGTSTP, SIG_IGN);  
+        signal(SIGINT, SIG_IGN);
+        signal(SIGCHLD,&sigchld_handler);
+        setpgid(shell_pid, shell_pid);
+        shell_pgid = getpgrp();
+        if (shell_pid != shell_pgid)
+        {
+            printf("Error, the shell is not process group leader");
+            exit(EXIT_FAILURE);
+        }
+        tcsetpgrp(shell_terminal, shell_pgid);
+    }
+    else
+    {
+        printf("Could not make SHELL interactive. Exiting..\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+
+
+
+
+
 
 
 
