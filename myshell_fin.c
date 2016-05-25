@@ -148,6 +148,7 @@ void execute()
 {
 
   if(elems[0] == NULL) return;
+      init();
   commande_normal(); // on s'oocupe les commandes : commande1 | commande2 | command3 ...
 
   
@@ -203,8 +204,7 @@ void commande_normal() {
             
             dup2(fds[1],STDOUT_FILENO);// mettre fds[1](write end) pour le sortie du processus de fils
             close(fds[0]);
-            close(fds[1]);
-                          
+            close(fds[1]);                 
             commande_normal();           // s'il y a deux ou plus pipes (|) ,utiliserz commande_pipe() recursivement
         }
         else{
@@ -266,11 +266,11 @@ void commande_basic(char** commande){
         int save_fd = dup(1); // on stocker le entré de shell ,pour revenir apres le redirection
         redirection(commande);    // si il y a ">" ou "<", on fait redirection
 
-        signal(SIGINT, SIG_DFL);                        
-        signal(SIGQUIT, SIG_DFL);
-        signal(SIGTTIN, SIG_DFL);
-        signal(SIGTSTP, SIG_DFL); 
-        signal(SIGCHLD, &sigchld_handler);                          
+        // signal(SIGINT, SIG_DFL);                        
+        // signal(SIGQUIT, SIG_DFL);
+        // signal(SIGTTIN, SIG_DFL);
+        // signal(SIGTSTP, SIG_DFL); 
+        // signal(SIGCHLD, &sigchld_handler);                          
 
         if(bg == 1)setpgid(getpid(),getpid()); // Si c'est un processus de fond , on donne un ID de group nouveau
         commande_option(commande);
@@ -347,7 +347,12 @@ void commande_option(char** commande)
             bgJobs();break;  
     case KILL:
             killJobs();break;     
-    default:             
+    default:
+    		signal(SIGINT, SIG_DFL);                        
+    		signal(SIGQUIT, SIG_DFL);
+    		signal(SIGTTIN, SIG_DFL);
+    		signal(SIGTSTP, SIG_DFL); 
+    		signal(SIGCHLD, &sigchld_handler);               
              if(execvp(commande[0], commande )==-1)     // le commande utilisant execvp
           printf("impossible d'execute \"%s\" (%s) en utilisant execvp\n",elems[0],strerror(errno));
   }   
@@ -1144,7 +1149,7 @@ void fgJobs()       // fg n ; fg %n
                       tempJob->status=FOREGROUND;
                       temp=1;
                       kill(tempJob->pid,SIGCONT);       // envoyer le signal pour continuer le job
-                      signal(SIGCHLD, SIG_DFL);
+                      signal(SIGCHLD, sigchld_handler);
                       tempJob->status=STOP;
                       int status;
                       waitpid(tempJob->pid,&status,WUNTRACED);
@@ -1169,7 +1174,7 @@ void fgJobs()       // fg n ; fg %n
                       tempJob->status=FOREGROUND;
                       temp=1;
                       kill(tempJob->pid,SIGCONT);
-                      signal(SIGCHLD, SIG_DFL);
+                      signal(SIGCHLD, sigchld_handler);
                       tempJob->status=STOP;
                       int status;
                       waitpid(tempJob->pid,&status,WUNTRACED);
