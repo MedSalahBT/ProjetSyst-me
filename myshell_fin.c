@@ -75,14 +75,16 @@ void cat(char** commande);
 void copy(char** commande);
 int Copy_f(char *fS,char *fD);
 int Copy_dir(char* dirS,char* dirD);
-void commande_basic(char** commande);
 void redirection(char** commande);
 int isBackground(char** commande);
-void commande_option(char** commande);
+
 
 
 char* commande_Path(char* commande);
 void commande_normal() ;
+void commande_option(char** commande);
+void commande_basic(char** commande);
+
 
 
 #define FOREGROUND 'F'
