@@ -67,7 +67,7 @@ void execute();
 
 int isNumber(char* str);
 void commande_history(char** commande);
-void exitt(char** commande);
+void exitt();
 void history(char** commande);
 void cd(char** commande);
 void touch(char** commande);
@@ -78,6 +78,7 @@ int Copy_dir(char* dirS,char* dirD);
 void commande_basic(char** commande);
 void redirection(char** commande);
 int isBackground(char** commande);
+void commande_option(char** commande);
 
 
 char* commande_Path(char* commande);
@@ -331,7 +332,7 @@ void commande_option(char** commande)
     case CAT:
             cat(commande);break;    
     case COPY: 
-            copy();break;    
+            copy(commande);break;    
     case JOBS:
             printJobs(0); break;    // n'affiche que le processus du fond
     case PS:
@@ -701,6 +702,7 @@ void cat(char** commande)
         flag =1;
       }
       int i= flag+1;
+      int numberColome=0;
       while(commande[i] != NULL)
       {
         // printf("%s\n", commande[i]);
@@ -713,7 +715,7 @@ void cat(char** commande)
         }
         else{
           ch=fgetc(file);
-          int numberColome=0;
+          
           if(flag == 1)
               printf("   %d  ",++numberColome);
           while(ch != EOF)
