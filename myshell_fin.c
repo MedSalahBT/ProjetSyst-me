@@ -180,8 +180,8 @@ void execute()
     case TOUCH: 
             touch();break;
     case CAT: 
-            // cat();
-            commande_normal();  
+            cat();
+            // commande_normal();  
             break;    
             /*
              En fait, on peux excuter le commande cat en utilisant execvp().
@@ -221,7 +221,6 @@ void affiche_invite()
   char repertoire[50];   
   getcwd(repertoire,sizeof(repertoire)); 
   printf("%s@%s : %s> ", pwd->pw_name, name,repertoire);
-
   fflush(stdout);
 }
 
@@ -231,7 +230,7 @@ void affiche_invite()
 void lit_ligne()
 {
   if (!fgets(ligne,sizeof(ligne)-1,stdin)) {
-    printf("\n");
+  	printf("\n");
     exit(0);
   }
 }
@@ -298,7 +297,7 @@ void commande_basic(char** commande){
   }
   else
     printf("Path de %s: %s\n", commande[0], filename);      //  Attention: cen effet ,c'est exactement sur le screem : stdout. 
-                                                            //  Par example: cat toto | grep l 
+                                                            //  Par example: cat toto | grep l    .
                                                             //  Les donné de la sortie de Cat contient le pharse "Path de Cat" ,
                                                             //  et il est une partie de l'entrée du Grep
                                                     
@@ -602,7 +601,7 @@ void copy()
   // check if the entre is right or not
   if( elems[2]==NULL || elems[3] != NULL)
   {
-    printf ("there are not enough or too many parameters ");
+    printf ("there are not enough or too many parameters\n ");
     return ;
   }
 
@@ -853,6 +852,41 @@ void commande_normal() {
 
 }
 
+/*
+  initialiser l'statut
+  */
+void init()
+{
+    shell_pid = getpid();
+    shell_terminal = STDIN_FILENO;
+    is_shell_interactive = isatty(shell_terminal);
+    if (is_shell_interactive)
+    {
+        while (tcgetpgrp(shell_terminal) != (shell_pgid = getpgrp()))
+            kill(shell_pid, SIGTTIN);
+        signal(SIGQUIT, SIG_IGN);     //au debut , on ignore tout les signaux
+        signal(SIGTTOU, SIG_IGN);
+        signal(SIGTTIN, SIG_IGN);
+        signal(SIGTSTP, SIG_IGN);  
+        signal(SIGINT, SIG_IGN);
+        signal(SIGCHLD,&sigchld_handler);
+        setpgid(shell_pid, shell_pid);
+        shell_pgid = getpgrp();
+        if (shell_pid != shell_pgid)
+        {
+            printf("Error, the shell is not process group leader");
+            exit(EXIT_FAILURE);
+        }
+        tcsetpgrp(shell_terminal, shell_pgid);
+    }
+    else
+    {
+        printf("Could not make SHELL interactive. Exiting..\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+
 job* insertJob(pid_t pid, pid_t ppid, pid_t pgid, char* name,int status)
 {
 
@@ -899,17 +933,32 @@ job* newJob(pid_t pid, pid_t ppid, pid_t pgid, char* name,int status)
 void printJobs(int flagPs)    
 {
     job* Job = JobList;
-    if (Job == NULL){printf("~Rien~\n" );return ;}
-    printf("--------------------------------------------------------\n");
-    printf(" %5s   %10s  %5s  %5s  %5s  %6s \n", "  NO", "NAME", "PID" ,"PPID", "PGID", "STATUS");
-    printf("--------------------------------------------------------\n");
-    while (Job != NULL)
+    if (Job == NULL){printf("Rien~\n" );return ;}
+    if(flagPs == 0)
     {
-        if(flagPs==0 && Job->status==FOREGROUND ) continue;  
-        printf("  %5d  %10s  %5d  %5d  %5d  %6c \n", Job->id, Job->name, Job->pid ,Job->ppid,Job->pgid, Job->status);
-        Job = Job->next;
+    	while (Job != NULL)
+    	{
+    	    if(Job->status==FOREGROUND ) continue;
+    	    if(Job->status == STOP )
+    	   		printf("  [%d]+Stopped     %10s  \n", Job->id, Job->name);
+    		else
+    	   		printf("  [%d]+Running  %10s  \n", Job->id, Job->name);
+    	    Job = Job->next;
+    	}
+    	return;
     }
-    printf("--------------------------------------------------------\n");
+    else
+    {
+    	printf("--------------------------------------------------------\n");
+    	printf(" %5s   %10s  %5s  %5s  %5s  %6s \n", "  NO", "NAME", "PID" ,"PPID", "PGID", "STATUS");
+    	printf("--------------------------------------------------------\n");
+    	while (Job != NULL)
+    	{
+    	    printf("  %5d  %10s  %5d  %5d  %5d  %6c \n", Job->id, Job->name, Job->pid ,Job->ppid,Job->pgid, Job->status);
+    	    Job = Job->next;
+    	}
+    	printf("--------------------------------------------------------\n");
+    }
 }
 /*
   fonction pour afficher les status quand il y a un signal 
@@ -930,11 +979,8 @@ void printStatus(job * job,int * termstatus)
     }
     else if (WIFSTOPPED(*termstatus))
     {
-        if(job->status==FOREGROUND)
-        {
-            printf("hello\n" );
-            printf("\n[%d]+   stopped\t   %s\n", numActiveJobs, job->name);
-        }
+  
+            printf("\n[%d]+   stopped\t   %s\n", job->id, job->name);
     }
     printf("\n");
 }
@@ -985,6 +1031,7 @@ void delJob(int pid,int * termstatus)
  */
 int stopJob(int pid,int * termstatus)
 {   
+
     job * tempJob=JobList;
     while (tempJob != NULL)
     {
@@ -992,6 +1039,7 @@ int stopJob(int pid,int * termstatus)
         {
             tempJob->status=STOP;
             printStatus(tempJob,termstatus);
+            signal(SIGCHLD, SIG_IGN);
             return 1;
         }
         tempJob = tempJob->next;
@@ -1141,7 +1189,13 @@ void bgJobs()       //  bg n ; bg %n
                       tempJob->status=FOREGROUND;
                       temp=1;
                       kill(tempJob->pid,SIGCONT);
-                      signal(SIGCHLD, SIG_DFL);
+                      signal(SIGQUIT, SIG_IGN);     //au debut , on ignore tout les signaux
+        			  signal(SIGTTOU, SIG_IGN);
+				      signal(SIGTTIN, SIG_IGN);
+				      signal(SIGTSTP, SIG_IGN);  
+				      signal(SIGINT, SIG_IGN);
+                      signal(SIGCHLD, SIG_IGN);
+
                       tempJob->status=BACKGROUND;
                   }
                   tempJob = tempJob->next;
@@ -1232,47 +1286,6 @@ void sigchld_handler(int signum)
     } 
     tcsetpgrp(shell_terminal,shell_pgid);
 }
-
-/*
-  initialiser l'statut
-  */
-void init()
-{
-    shell_pid = getpid();
-    shell_terminal = STDIN_FILENO;
-    is_shell_interactive = isatty(shell_terminal);
-    if (is_shell_interactive)
-    {
-        while (tcgetpgrp(shell_terminal) != (shell_pgid = getpgrp()))
-            kill(shell_pid, SIGTTIN);
-        signal(SIGQUIT, SIG_IGN);     //au debut , on ignore tout les signaux
-        signal(SIGTTOU, SIG_IGN);
-        signal(SIGTTIN, SIG_IGN);
-        signal(SIGTSTP, SIG_IGN);  
-        signal(SIGINT, SIG_IGN);
-        signal(SIGCHLD,&sigchld_handler);
-        setpgid(shell_pid, shell_pid);
-        shell_pgid = getpgrp();
-        if (shell_pid != shell_pgid)
-        {
-            printf("Error, the shell is not process group leader");
-            exit(EXIT_FAILURE);
-        }
-        tcsetpgrp(shell_terminal, shell_pgid);
-    }
-    else
-    {
-        printf("Could not make SHELL interactive. Exiting..\n");
-        exit(EXIT_FAILURE);
-    }
-}
-
-
-
-
-
-
-
 
 
 
