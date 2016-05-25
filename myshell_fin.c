@@ -66,17 +66,16 @@ void decoupe();
 void execute();
 
 int isNumber(char* str);
-void commande_history();
-void exitt();
-void history();
-void cd();
-void touch();
-void cat();
-void copy();
+void commande_history(char** commande);
+void exitt(char** commande);
+void history(char** commande);
+void cd(char** commande);
+void touch(char** commande);
+void cat(char** commande);
+void copy(char** commande);
 int Copy_f(char *fS,char *fD);
 int Copy_dir(char* dirS,char* dirD);
 void commande_basic(char** commande);
-int isRedirection(char** commande);
 void redirection(char** commande);
 int isBackground(char** commande);
 
@@ -128,7 +127,6 @@ void sigchld_handler(int signum);
 int main()
 {
   system("clear");
-        // pid_t child_pid;
   
   while (1) {
     init();
@@ -146,20 +144,171 @@ int main()
 void execute()
 {
 
-  if(elems[0] == NULL) return; 
+  if(elems[0] == NULL) return;
+  commande_normal(); // on s'oocupe les commandes : commande1 | commande2 | command3 ...
 
+  
+}
+
+
+/*
+  pour decouper les commande de pipe recursivement.
+  Au debut, flag_pipe equal le nombre de elems
+  */
+
+int decoupe_pipe(){
+  int i= flag_pipe-1;
+  while(i!=0){
+    if(strcmp(elems[i],"|")==0){
+      elems[i] =NULL;
+      break;
+    }
+    i--;
+  }
+  flag_pipe =i;
+  return i;
+}
+
+/*
+  on suppose les commandes : commande1 | commande2 | command3 ...
+  */
+void commande_normal() {
+  // printf("pipe %d\n", flag_pipe);
+  int flag=decoupe_pipe();
+  if(flag == 0) {commande_basic(elems);return;}   // le premiere commande (grande-grande-fils), commande1
+
+  int fds[2];
+    if(pipe(fds) == -1){
+        perror("pipe error");
+        exit(EXIT_FAILURE);
+    }
+
+  pid_t pid;
+  if ((pid = fork()) < 0) {
+    printf("fork failed.\n");
+    return;
+  }
+
+  if(pid==0){   
+        pid_t pid2;
+        pid2 = fork();
+        if(pid2 == -1){
+            perror("fork error");
+            exit(EXIT_FAILURE);
+        }
+        if(pid2 == 0){
+            
+            dup2(fds[1],STDOUT_FILENO);// mettre fds[1](write end) pour le sortie du processus de fils
+            close(fds[0]);
+            close(fds[1]);
+                          
+            commande_normal();           // s'il y a deux ou plus pipes (|) ,utiliserz commande_pipe() recursivement
+        }
+        else{
+    
+            dup2(fds[0],STDIN_FILENO);  // mettre fds[0](read end) comme l'entrée au processus de parent
+            close(fds[0]);
+            close(fds[1]);
+            commande_basic(elems+flag+1);   // le commande prochain (parent)
+
+        }
+        exit(0);
+  }
+  else
+  {
+    close(fds[0]);
+    close(fds[1]);
+    int status;
+    waitpid(pid,&status,WUNTRACED);
+  }
+}
+/*
+  commande 
+  */ 
+void commande_basic(char** commande){
+
+  char* filename = commande_Path(commande[0]);
+  if (filename == NULL) {
+    printf("Command not found.\n");
+    return;
+  }
+  else
+    printf("Path de %s: %s\n", commande[0], filename);      //  Attention: cen effet ,c'est exactement sur le screem : stdout. 
+                                                            //  Par example: cat toto | grep l    .
+                                                            //  Les donné de la sortie de Cat contient le pharse "Path de Cat" ,
+                                                            //  et il est une partie de l'entrée du Grep
+                                                    
+  int bg = isBackground(commande);
+  /*
+    Si c'est un tache de fond(background), on mettre le processus parent ignore le signal de fils. 
+      Et c'est obligatoire pour éviter le processus zombie.
+      L'autre facon : on ajoute un signal_handler à processus de fils
+  // */  
+  if (bg == 1)
+    {    
+        // printf("background\n");
+        // signal(SIGCHLD, SIG_IGN);      
+    }
+  else
+    signal(SIGCHLD, SIG_DFL);          // pour le parent surveille le fils ( le fonction waitpid )  
+
+    child_pid = fork();
+    if (child_pid < 0) {
+      printf("fork s'echoue (%s)\n",strerror(errno));
+      return;
+    }
+
+    else if (child_pid==0) {  // fils
+        
+        int save_fd = dup(1); // on stocker le entré de shell ,pour revenir apres le redirection
+        redirection(commande);    // si il y a ">" ou "<", on fait redirection
+
+        signal(SIGINT, SIG_DFL);                        
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL); 
+        signal(SIGCHLD, &sigchld_handler);                          
+
+        if(bg == 1)setpgid(getpid(),getpid()); // Si c'est un processus de fond , on donne un ID de group nouveau
+        commande_option(commande);
+        dup2(save_fd, 1); //revenir apres le redirection
+    }
+    else {
+          
+          usleep(5000);     // attend un peu de processus de fil
+
+          JobList = insertJob(child_pid,getpid(), getpgid(child_pid), elems[0],(bg==1)?BACKGROUND:FOREGROUND);
+
+          if(bg==0)         // Si un processus de background, on n'attends pas 
+          {
+            pid_t ppid;
+            int status;
+            if((ppid=waitpid(child_pid,&status,WUNTRACED))!=-1)      /* attend fils */
+              {
+                if(WIFSTOPPED(status))  stopJob(ppid,&status);
+                else   delJob(ppid,&status); 
+                  tcsetpgrp(shell_terminal,shell_pgid);      
+              }   
+          }
+      }
+
+}
+
+// On choit le commande pour excuter
+void commande_option(char** commande)
+{
   int option=0;
   int option_normal=0;
   while(option < NUMBER_Commande)
   {
     //commande !! et !n
-    if(elems[0][0] == '!') {
+    if(commande[0][0] == '!') {
         option_normal=1;
         option = COMMANDE_HISTORY;
         break;
     }
     //commande exit, cd , history, touch, cat, copy,jobs, wait,fg ,bg, kill, ps
-    if( strcmp(builtin_str[option++],elems[0])==0)
+    if( strcmp(builtin_str[option++],commande[0])==0)
       {
         option_normal=1;
         break;
@@ -170,25 +319,17 @@ void execute()
   switch(option)
   { 
     case COMMANDE_HISTORY: 
-            commande_history();break;
+            commande_history(commande);break;
     case EXIT: 
             exitt();break;
     case CD: 
-            cd();break;
+            cd(commande);break;
     case HISTORY: 
-            history();break;
+            history(commande);break;
     case TOUCH: 
-            touch();break;
-    case CAT: 
-            cat();
-            // commande_normal();  
-            break;    
-            /*
-             En fait, on peux excuter le commande cat en utilisant execvp().
-            et si vous voulez tester le commande pipe ou redirection (example: cat file1 > file2 ou cat file1 | grep p),
-            le mettez sans commantaire et supprimer cat().
-               */
-
+            touch(commande);break;
+    case CAT:
+            cat(commande);break;    
     case COPY: 
             copy();break;    
     case JOBS:
@@ -203,11 +344,147 @@ void execute()
             bgJobs();break;  
     case KILL:
             killJobs();break;     
-    default: 
-            
-            commande_normal();
+    default:             
+             if(execvp(commande[0], commande )==-1)     // le commande utilisant execvp
+          printf("impossible d'execute \"%s\" (%s) en utilisant execvp\n",elems[0],strerror(errno));
   }   
 }
+
+
+
+/*
+  justifier est qu'il a un ">", si oui, retourner son place, sinon retourner 0 
+  */
+void redirection(char** commande)
+{
+  int i=0,j=0;                // i pour stocker le place de ">", j pour "<"
+  int temp1=0,temp2=0;
+  while(commande[i]!=NULL){
+    if(strcmp(commande[i],">")==0){
+      commande[i] =NULL;
+      temp1=1;
+      break;
+    }
+    if(strcmp(commande[j],"<")==0){
+      commande[i] =NULL;
+      temp2=1;
+      break;
+    }
+    i++;j++;
+  }
+
+  if(temp1==0) i=0;
+  if(temp2==0) j=0;
+
+  printf("%s\n",commande[i]);
+  int fid;
+  if(commande[i+1]==NULL)return;
+    if (temp1 == 1) {
+
+      fid = open(commande[i+1], O_CREAT | O_TRUNC | O_WRONLY, 0600);  // commande[i+1] est le nom de file
+      dup2(fid, 1); // mettre sortie ver file
+      
+    } else if (temp2== 1) {
+      fid = open(commande[j+1],O_RDONLY, 0600);         // commande[i+1] est le nom de file
+      dup2(fid, 0);           // mettre file  comme l'entre  au processu
+    }
+  close(fid);
+
+    return;
+}
+
+/*
+ justifier est ce qu'il y a &
+ */
+int isBackground(char** commande)
+{
+  int temp=0;
+  int i=0;
+  while(commande[i]!=NULL){
+    if(strcmp(commande[i],"&")==0){
+      elems[i] =NULL;
+      temp=1;
+      break;
+    }
+    i++;
+  }
+  if(temp==0) return 0;else return 1;
+  // return 
+}
+
+/*
+  trouver chaque path de command basic utilisant execvp
+*/
+char* commande_Path(char* commande){
+  FILE *fpin;
+  char p[1024];
+  char *temp = (char *)calloc(512, sizeof(char));
+  path = (char *) getenv("PATH");
+
+  strcpy ( p, path );
+  path = strtok ( p, ":" );   // trouver le premiere path
+  while ( path != NULL ) {
+    strcpy ( temp, path );  // stocker le premiere path
+    strcat ( temp, "/" );     
+    strcat ( temp, commande );   //  path/filename
+    if ( ( fpin = fopen ( temp, "r" ) ) == NULL ) {
+      path = strtok (NULL, ":" );  // le prochain path
+    } else {
+      break;  
+    }
+  }
+
+  if ( fpin != NULL ) {           //si on peut le trouver dans le "PATH",retourner le path
+    return temp;
+  } 
+  else 
+  {                            //sinon , on justifier est-ce qu'est ce que le commande est exactment un fichier
+      struct stat buf;
+      stat(commande, &buf);
+      if(S_ISREG (buf.st_mode))
+      {
+          if(commande[0]=='.'){       // le path relative du fichier(commande)
+              char repertoire[100];   
+              getcwd(repertoire,sizeof(repertoire)); 
+              char * path= (char *)calloc(1024, sizeof(char));
+              strcpy(path,repertoire);
+              strcat(path,commande+1);
+              return path;
+          }
+          else                                  
+          return commande;      // le path absolu du fichier(commande)
+      }
+  }
+
+  int option=0;                   // À la fin, est0ce que c'est un commander re definie
+  int option_normal=0;
+  while(option < NUMBER_Commande)
+  {
+    //commande !! et !n
+    if(commande[0] == '!') {
+        option_normal=1;
+        option = COMMANDE_HISTORY;
+        break;
+    }
+    //commande exit, cd , history, touch, cat, copy,jobs, wait,fg ,bg, kill, ps
+    if( strcmp(builtin_str[option++],commande)==0)
+      {
+        option_normal=1;
+        break;
+      }
+  }
+  if(option_normal == 1){
+    char repertoire[100];   
+    getcwd(repertoire,sizeof(repertoire)); 
+    char * path= (char *)calloc(1024, sizeof(char));
+    strcpy(path,repertoire);
+    strcat(path,commande);
+    return path;
+    }
+  return NULL; 
+}
+
+
 
 /*
   interface pour entrée du commande
@@ -285,148 +562,17 @@ int isNumber(char* str)
 
 
 
-/*
-  commande utilisant execvp créant un pid,  utilisant execvp
-  */ 
-void commande_basic(char** commande){
 
-  char* filename = commande_Path(commande[0]);
-  if (filename == NULL) {
-    printf("Command not found.\n");
-    return;
-  }
-  else
-    printf("Path de %s: %s\n", commande[0], filename);      //  Attention: cen effet ,c'est exactement sur le screem : stdout. 
-                                                            //  Par example: cat toto | grep l    .
-                                                            //  Les donné de la sortie de Cat contient le pharse "Path de Cat" ,
-                                                            //  et il est une partie de l'entrée du Grep
-                                                    
-
-  int bg = isBackground(commande);
-  /*
-    Si c'est un tache de fond(background), on mettre le processus parent ignore le signal de fils. 
-      Et c'est obligatoire pour éviter le processus zombie.
-      L'autre facon : on ajoute un signal_handler à processus de fils
-  // */  
-  if (bg == 1)
-    {    
-        // printf("background\n");
-        // signal(SIGCHLD, SIG_IGN);      
-    }
-  else
-    signal(SIGCHLD, SIG_DFL);          // pour le parent surveille le fils ( le fonction waitpid )  
-
-    child_pid = fork();
-    if (child_pid < 0) {
-      printf("fork s'echoue (%s)\n",strerror(errno));
-      return;
-    }
-
-    else if (child_pid==0) {  // fils
-        
-        redirection(commande);    // si il y a ">" ou "<", on fait redirection
-        signal(SIGINT, SIG_DFL);                        
-        signal(SIGQUIT, SIG_DFL);
-        signal(SIGTTIN, SIG_DFL);
-        signal(SIGTSTP, SIG_DFL); 
-        signal(SIGCHLD, &sigchld_handler);                          
-
-        if(bg == 1)setpgid(getpid(),getpid()); // Si c'est un processus de fond , on donne un ID de group nouveau
-        if(execvp(commande[0], commande )==-1)
-          printf("impossible d'execute \"%s\" (%s)\n",elems[0],strerror(errno));
-
-    }
-    else {
-          
-          usleep(5000);     // attend un peu de processus de fil
-
-          JobList = insertJob(child_pid,getpid(), getpgid(child_pid), elems[0],(bg==1)?BACKGROUND:FOREGROUND);
-
-          if(bg==0)         // Si un processus de background, on n'attends pas 
-          {
-            pid_t ppid;
-            int status;
-            if((ppid=waitpid(child_pid,&status,WUNTRACED))!=-1)      /* attend fils */
-              {
-                if(WIFSTOPPED(status))  stopJob(ppid,&status);
-                else   delJob(ppid,&status); 
-                  tcsetpgrp(shell_terminal,shell_pgid);      
-              }   
-          }
-      }
-
-}
-
-/*
-  justifier est qu'il a un ">", si oui, retourner son place, sinon retourner 0 
-  */
-void redirection(char** commande)
-{
-  int i=0,j=0;                // i pour stocker le place de ">", j pour "<"
-  int temp1=0,temp2=0;
-  while(commande[i]!=NULL){
-    if(strcmp(commande[i],">")==0){
-      commande[i] =NULL;
-      temp1=1;
-      break;
-    }
-    if(strcmp(commande[j],"<")==0){
-      commande[i] =NULL;
-      temp2=1;
-      break;
-    }
-    i++;j++;
-  }
-
-  if(temp1==0) i=0;
-  if(temp2==0) j=0;
-
-  int fid;
-  if(commande[i+1]==NULL)return;
-    if (temp1 == 1) {
-      fid = open(commande[i+1], O_CREAT | O_TRUNC | O_WRONLY, 0600);  // commande[i+1] est le nom de file
-      dup2(fid, 1);           // mettre sortie ver file
-      
-    } else if (temp2== 1) {
-      fid = open(commande[j+1],O_RDONLY, 0600);         // commande[i+1] est le nom de file
-      dup2(fid, 0);           // mettre file  comme l'entre  au processu
-    }
-    close(fid);
-    return;
-}
-
-/*
- justifier est ce qu'il y a &
- */
-int isBackground(char** commande)
-{
-  int temp=0;
-  int i=0;
-  while(commande[i]!=NULL){
-    if(strcmp(commande[i],"&")==0){
-      elems[i] =NULL;
-      temp=1;
-      break;
-    }
-    i++;
-  }
-  if(temp==0) return 0;else return 1;
-  // return 
-}
 
 /*
 le commande history and history n
   */
-void history()
+void history(char** commande)
 {	
 	int n=5;   // nombre du commande pour afficher
-  	if(elems[2] != NULL)
-  	{
-  		printf("Trop de parametres");
-  		return;
-  	}
-  	if(elems[1] != NULL){
-  		n=isNumber(elems[1]);
+  	
+  	if(commande[1] != NULL){
+  		n=isNumber(commande[1]);
   	}
 
   	if( n!=-1 && n>cmdHisC) n=cmdHisC;
@@ -449,46 +595,45 @@ void exitt()
 /*
   le commande cd : change le repertoire
   */
-void cd()
+void cd(char** commande)
 {
-	if(elems[1] == NULL || strcmp(elems[1],"~")==0 ){
+	if(commande[1] == NULL || strcmp(commande[1],"~")==0 ){
             chdir(getenv("HOME"));
           }
-    else  chdir(elems[1]);
+    else  chdir(commande[1]);
 }
 
 
 /*
   le commande touch file et touch -d file
   */
-void touch()
+void touch(char** commande)
 {
-	if(elems[3]==NULL)
-    {
+	
     	struct stat stat_file;
     	// c'est touch file 
-    	if(elems[2] ==NULL)
+    	if(commande[2] ==NULL)
     	{
-    		stat(elems[1],&stat_file);
+    		stat(commande[1],&stat_file);
     		//s'il exist , on doit changer sa date de modification
     		time_t lt;
 			   lt=time(NULL);
 			   stat_file.st_ctime=lt;
     	}
     	// c'est touch -d file
-   		else if (strcmp("-d",elems[1])==0)
+   		else if (strcmp("-d",commande[1])==0)
     	{
     		  // si le file  n'exist pas, on le cree, et donne la date maintanant
-    		  if(stat(elems[2],&stat_file)== -1)
+    		  if(stat(commande[2],&stat_file)== -1)
     		  {
     			   time_t t;
 				      t=time(NULL);
-    			   printf("%s : %s",elems[2], ctime(&t));
+    			   printf("%s : %s",commande[2], ctime(&t));
    			  }
    			  // s'il exist deja , on affich la date de derniere modification 	
     		  else 
     		  {
-    		  	printf("%s : %s",elems[2],ctime(&(stat_file.st_ctime)));
+    		  	printf("%s : %s",commande[2],ctime(&(stat_file.st_ctime)));
     		  }
     		  return ;
 
@@ -497,22 +642,18 @@ void touch()
     		{
     			printf("Les parametres ne sont pas correct\n");
     		}	
-    }
-  else
-    {
-    	printf("Trop de parametres\n");
-    }     
+   
 }
 
 /*
    le commande !! et !n ，n est un entier positive ou negative
    */
-void commande_history()
+void commande_history(char** commande)
 {
-  if(elems[0][1]!='\0')
+  if(commande[0][1]!='\0')
     {
       int n; // numéro du commande , si c'est negative ,ca veut dire le n derniere commande
-      if( cmdHisC >=2 && elems[0][1] == '!' && elems[0][2]=='\0')
+      if( cmdHisC >=2 && commande[0][1] == '!' && commande[0][2]=='\0')
       {
       	cmdHisC -- ;
         strcpy(ligne,cmdsHistory[cmdHisC-1]);
@@ -520,8 +661,8 @@ void commande_history()
       }
       else
       {
-        elems[0]++;  
-        int n = isNumber(elems[0]);
+        commande[0]++;  
+        int n = isNumber(commande[0]);
         printf("in commande history %d\n", n);
         if( n >= 1 && n < cmdHisC )
         {
@@ -548,26 +689,26 @@ void commande_history()
 }
 
 /*
-  le commande cat file , cat -d file et cat [-d] file1 - file2 [- file3]
+  le commande cat file , cat -d file et cat [-d] file1 file2 [file3]
   */
-void cat()
+void cat(char** commande)
 {
-  if(elems[1]!=NULL)
+  if(commande[1]!=NULL)
     {
       int flag=0;  // pour justifier -d
-      if(strcmp("-n",elems[1])==0)
+      if(strcmp("-n",commande[1])==0)
       {
         flag =1;
       }
       int i= flag+1;
-      while(elems[i] != NULL)
+      while(commande[i] != NULL)
       {
-        // printf("%s\n", elems[i]);
+        // printf("%s\n", commande[i]);
         FILE *file;  
-        file = fopen(elems[i], "r");  
+        file = fopen(commande[i], "r");  
         char ch;  
         if(file==NULL){
-          printf( "Il n'y a pas file: %s\n", elems[i]);  //源文件不存在的时候提示错误
+          printf( "Il n'y a pas file: %s\n", commande[i]);  //源文件不存在的时候提示错误
           return;
         }
         else{
@@ -596,10 +737,10 @@ void cat()
 /*
  le commande copy 
  */
-void copy()
+void copy(char** commande)
 {
   // check if the entre is right or not
-  if( elems[2]==NULL || elems[3] != NULL)
+  if( commande[2]==NULL || commande[3] != NULL)
   {
     printf ("there are not enough or too many parameters\n ");
     return ;
@@ -607,18 +748,18 @@ void copy()
 
   // check which kind of document for copy
   struct stat buf;
-  stat(elems[1], &buf);
+  stat(commande[1], &buf);
   if(S_ISREG (buf.st_mode))
   {
-    Copy_f(elems[1],elems[2]);
+    Copy_f(commande[1],commande[2]);
   }
   else if(S_ISDIR(buf.st_mode))
   {
-  Copy_dir(elems[1],elems[2]);
+  Copy_dir(commande[1],commande[2]);
   }
   else 
   {
-    printf("%s is not a file, and not a folder  ",elems[1]);
+    printf("%s is not a file, and not a folder  ",commande[1]);
   }
 
 }
@@ -730,127 +871,6 @@ int Copy_dir(char* dirS,char* dirD)
     return 1;
 }
 
-/*
-  trouver chaque path de command basic utilisant execvp
-*/
-char* commande_Path(char* commande){
-  FILE *fpin;
-  char p[1024];
-  char *temp = (char *)calloc(512, sizeof(char));
-  path = (char *) getenv("PATH");
-
-  strcpy ( p, path );
-  path = strtok ( p, ":" );   // trouver le premiere path
-  while ( path != NULL ) {
-    strcpy ( temp, path );  // stocker le premiere path
-    strcat ( temp, "/" );     
-    strcat ( temp, commande );   //  path/filename
-    if ( ( fpin = fopen ( temp, "r" ) ) == NULL ) {
-      path = strtok (NULL, ":" );  // le prochain path
-    } else {
-      break;  
-    }
-  }
-
-  if ( fpin != NULL ) {           //si on peut le trouver dans le "PATH",retourner le path
-    return temp;
-  } 
-  else {                            //sinon , on justifier qu'est ce que le commande est exactment un fichier
-    struct stat buf;
-    stat(commande, &buf);
-    if(S_ISREG (buf.st_mode)){
-        if(commande[0]=='.'){       // le path relative du fichier(commande)
-            char repertoire[100];   
-            getcwd(repertoire,sizeof(repertoire)); 
-            char * path= (char *)calloc(1024, sizeof(char));
-            strcpy(path,repertoire);
-            strcat(path,commande+1);
-            return path;
-        }
-        else 
-        {
-          return commande;      // le path absolu du fichier(commande)
-        }
-        
-    }
-    else 
-      return 0;
-  }
-}
-
-
-/*
-  pour decouper les commande de pipe recursivement.
-  Au debut, flag_pipe equal le nombre de elems
-  */
-
-int decoupe_pipe(){
-  int i= flag_pipe-1;
-  while(i!=0){
-    if(strcmp(elems[i],"|")==0){
-      elems[i] =NULL;
-      break;
-    }
-    i--;
-  }
-  flag_pipe =i;
-  return i;
-}
-
-/*
-  on suppose les commandes : commande1 | commande2 | command3 ...
-  */
-void commande_normal() {
-  // printf("pipe %d\n", flag_pipe);
-  int flag=decoupe_pipe();
-  if(flag == 0) {commande_basic(elems);return;}   // le premiere commande (grande-grande-fils), commande1
-
-  int fds[2];
-    if(pipe(fds) == -1){
-        perror("pipe error");
-        exit(EXIT_FAILURE);
-    }
-
-  pid_t pid;
-  if ((pid = fork()) < 0) {
-    printf("fork failed.\n");
-    return;
-  }
-
-  if(pid==0){   
-        pid_t pid2;
-        pid2 = fork();
-        if(pid2 == -1){
-            perror("fork error");
-            exit(EXIT_FAILURE);
-        }
-        if(pid2 == 0){
-            
-            dup2(fds[1],STDOUT_FILENO);// mettre fds[1](write end) pour le sortie du processus de fils
-            close(fds[0]);
-            close(fds[1]);
-                          
-            commande_normal();           // s'il y a deux ou plus pipes (|) ,utiliserz commande_pipe() recursivement
-        }
-        else{
-    
-            dup2(fds[0],STDIN_FILENO);  // mettre fds[0](read end) comme l'entrée au processus de parent
-            close(fds[0]);
-            close(fds[1]);
-            commande_basic(elems+flag+1);   // le commande prochain (parent)
-
-        }
-        exit(0);
-  }
-  else
-  {
-    close(fds[0]);
-    close(fds[1]);
-    int status;
-    waitpid(pid,&status,WUNTRACED);
-  }
-
-}
 
 /*
   initialiser l'statut
@@ -1098,7 +1118,7 @@ void waitJobs()      //   wait [n]
 
 void fgJobs()       // fg n ; fg %n
 {
-  printf("fg jobs\n");
+  // printf("fg jobs\n");
   if (elems[1]==NULL){
     printf("Ce job n'exist pas\n");return;}
 
@@ -1167,7 +1187,7 @@ void fgJobs()       // fg n ; fg %n
 
 void bgJobs()       //  bg n ; bg %n
 {
-  printf("bg jobs\n");
+  // printf("bg jobs\n");
   if (elems[1]==NULL){
     printf("Ce job n'exist pas\n");return;}
 
@@ -1236,7 +1256,7 @@ void bgJobs()       //  bg n ; bg %n
 
 void killJobs()     // kill pid
 { 
-  printf("kill jobs\n");
+  // printf("kill jobs\n");
   if (elems[1]==NULL){
     printf("Ce job n'exist pas\n");return;}
 
