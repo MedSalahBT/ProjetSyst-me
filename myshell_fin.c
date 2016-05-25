@@ -384,7 +384,6 @@ void redirection(char** commande)
   if(temp1==0) i=0;
   if(temp2==0) j=0;
 
-  printf("%s\n",commande[i]);
   int fid;
   if(commande[i+1]==NULL)return;
     if (temp1 == 1) {
