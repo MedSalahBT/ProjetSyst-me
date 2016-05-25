@@ -24,6 +24,8 @@ char* elems[MAXELEMS];
 int elems_count;
 char *path; 
 int flag_pipe;
+int save_fd; // on stocker le entré de shell ,pour revenir                                                        //  et il est une partie de l'entrée du Grep 
+
 
 
 #define COMMANDE_HISTORY 0
@@ -82,7 +84,7 @@ int isBackground(char** commande);
 
 char* commande_Path(char* commande);
 void commande_normal() ;
-void commande_option(char** commande);
+int commande_option(char** commande);
 void commande_basic(char** commande);
 
 
@@ -226,7 +228,7 @@ void commande_normal() {
   }
 }
 /*
-  commande 
+  commande        //版本： jobs正常， history > 2错误
   */ 
 void commande_basic(char** commande){
 
@@ -239,14 +241,21 @@ void commande_basic(char** commande){
     printf("Path de %s: %s\n", commande[0], filename);      //  Attention: cen effet ,c'est exactement sur le screem : stdout. 
                                                             //  Par example: cat toto | grep l    .
                                                             //  Les donné de la sortie de Cat contient le pharse "Path de Cat" ,
-                                                            //  et il est une partie de l'entrée du Grep
-                                                    
+  redirection(commande);    // si il y a ">" ou "<", on fait redirection
+  
+  if(commande_option(commande)==0)    //On choit le commande redefinie pour excuter et sortir
+    { 
+      dup2(save_fd, 1);   //revenir apres le redirection
+      return;     // terminer
+    }
+  
+  //ce commande n'est pas le commande redefinie , on va suivant 
   int bg = isBackground(commande);
   /*
     Si c'est un tache de fond(background), on mettre le processus parent ignore le signal de fils. 
       Et c'est obligatoire pour éviter le processus zombie.
       L'autre facon : on ajoute un signal_handler à processus de fils
-  // */  
+  // // */  
   if (bg == 1)
     {    
         // printf("background\n");
@@ -263,23 +272,22 @@ void commande_basic(char** commande){
 
     else if (child_pid==0) {  // fils
         
-        int save_fd = dup(1); // on stocker le entré de shell ,pour revenir apres le redirection
-        redirection(commande);    // si il y a ">" ou "<", on fait redirection
-
-        // signal(SIGINT, SIG_DFL);                        
-        // signal(SIGQUIT, SIG_DFL);
-        // signal(SIGTTIN, SIG_DFL);
-        // signal(SIGTSTP, SIG_DFL); 
-        // signal(SIGCHLD, &sigchld_handler);                          
-
+        signal(SIGINT, SIG_DFL);                        
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL); 
+        signal(SIGCHLD, &sigchld_handler);                          
         if(bg == 1)setpgid(getpid(),getpid()); // Si c'est un processus de fond , on donne un ID de group nouveau
-        commande_option(commande);
-        dup2(save_fd, 1); //revenir apres le redirection
+        if(commande_option(commande)==1){
+            if(execvp(commande[0], commande )==-1)     // le commande utilisant execvp
+          printf("impossible d'execute \"%s\" (%s) en utilisant execvp\n",elems[0],strerror(errno));
+        }
+        
     }
     else {
           
           usleep(5000);     // attend un peu de processus de fil
-
+          dup2(save_fd, 1);  //revenir apres le redirection
           JobList = insertJob(child_pid,getpid(), getpgid(child_pid), elems[0],(bg==1)?BACKGROUND:FOREGROUND);
 
           if(bg==0)         // Si un processus de background, on n'attends pas 
@@ -297,8 +305,8 @@ void commande_basic(char** commande){
 
 }
 
-// On choit le commande pour excuter
-void commande_option(char** commande)
+// On choit le commande redefinie pour excuter  ,si c'est pas le commande redefinie, on retourner 0
+int commande_option(char** commande)
 {
   int option=0;
   int option_normal=0;
@@ -348,14 +356,9 @@ void commande_option(char** commande)
     case KILL:
             killJobs();break;     
     default:
-    		signal(SIGINT, SIG_DFL);                        
-    		signal(SIGQUIT, SIG_DFL);
-    		signal(SIGTTIN, SIG_DFL);
-    		signal(SIGTSTP, SIG_DFL); 
-    		signal(SIGCHLD, &sigchld_handler);               
-             if(execvp(commande[0], commande )==-1)     // le commande utilisant execvp
-          printf("impossible d'execute \"%s\" (%s) en utilisant execvp\n",elems[0],strerror(errno));
+            return 1;                       
   }   
+  return 0;
 }
 
 
@@ -445,7 +448,7 @@ char* commande_Path(char* commande){
     return temp;
   } 
   else 
-  {                            //sinon , on justifier est-ce qu'est ce que le commande est exactment un fichier
+  {                            //sinon , on justifier est-ce qu'est que le commande est exactment un fichier
       struct stat buf;
       stat(commande, &buf);
       if(S_ISREG (buf.st_mode))
@@ -463,7 +466,7 @@ char* commande_Path(char* commande){
       }
   }
 
-  int option=0;                   // À la fin, est0ce que c'est un commander re definie
+  int option=0;                   // À la fin, est ce que c'est un commander re definie
   int option_normal=0;
   while(option < NUMBER_Commande)
   {
@@ -485,6 +488,7 @@ char* commande_Path(char* commande){
     getcwd(repertoire,sizeof(repertoire)); 
     char * path= (char *)calloc(1024, sizeof(char));
     strcpy(path,repertoire);
+    strcat(path,"/");
     strcat(path,commande);
     return path;
     }
@@ -566,10 +570,6 @@ int isNumber(char* str)
 	int number = atoi(str);
   	return number;
 }
-
-
-
-
 
 /*
 le commande history and history n
@@ -670,7 +670,6 @@ void commande_history(char** commande)
       {
         commande[0]++;  
         int n = isNumber(commande[0]);
-        printf("in commande history %d\n", n);
         if( n >= 1 && n < cmdHisC )
         {
           cmdHisC -- ;
@@ -711,7 +710,6 @@ void cat(char** commande)
       int numberColome=0;
       while(commande[i] != NULL)
       {
-        // printf("%s\n", commande[i]);
         FILE *file;  
         file = fopen(commande[i], "r");  
         char ch;  
@@ -884,7 +882,8 @@ int Copy_dir(char* dirS,char* dirD)
   initialiser l'statut
   */
 void init()
-{
+{ 
+    int save_fd = dup(1); // on stocker le entré de shell ,pour revenir                                             
     shell_pid = getpid();
     shell_terminal = STDIN_FILENO;
     is_shell_interactive = isatty(shell_terminal);
@@ -1058,8 +1057,9 @@ void delJob(int pid,int * termstatus)
  fonction pour le Ctrl+Z, qui suspend le processus
  */
 int stopJob(int pid,int * termstatus)
-{   
-
+{
+    
+    printf("后");
     job * tempJob=JobList;
     while (tempJob != NULL)
     {
@@ -1068,10 +1068,12 @@ int stopJob(int pid,int * termstatus)
             tempJob->status=STOP;
             printStatus(tempJob,termstatus);
             signal(SIGCHLD, SIG_IGN);
-            return 1;
+            break;
         }
         tempJob = tempJob->next;
     }
+
+    printf("sys\n");
     return 0;
 }
 
@@ -1145,13 +1147,13 @@ void fgJobs()       // fg n ; fg %n
               {
                   if(tempJob->id==number)
                   {
-                      tempJob->status=FOREGROUND;
+                      tempJob->status=FOREGROUND;   // just pour le traitement dans le jobs list
                       temp=1;
                       kill(tempJob->pid,SIGCONT);       // envoyer le signal pour continuer le job
-                      signal(SIGCHLD, sigchld_handler);
                       tempJob->status=STOP;
+                      signal(SIGCHLD, &sigchld_handler);
                       int status;
-                      waitpid(tempJob->pid,&status,WUNTRACED);
+                      waitpid(tempJob->pid,&status,WNOHANG|WUNTRACED);
                       break;
                   }
                   tempJob = tempJob->next;
@@ -1173,10 +1175,11 @@ void fgJobs()       // fg n ; fg %n
                       tempJob->status=FOREGROUND;
                       temp=1;
                       kill(tempJob->pid,SIGCONT);
-                      signal(SIGCHLD, sigchld_handler);
-                      tempJob->status=STOP;
+                      tempJob->status=STOP; 
+                      signal(SIGCHLD, SIG_DFL);                  
+                      signal(SIGCHLD, &sigchld_handler); 
                       int status;
-                      waitpid(tempJob->pid,&status,WUNTRACED);
+                      waitpid(tempJob->pid,&status,WNOHANG|WUNTRACED);
                       break;
                   }
                   tempJob = tempJob->next;
@@ -1217,13 +1220,7 @@ void bgJobs()       //  bg n ; bg %n
                       tempJob->status=FOREGROUND;
                       temp=1;
                       kill(tempJob->pid,SIGCONT);
-                      signal(SIGQUIT, SIG_IGN);     //au debut , on ignore tout les signaux
-        			  signal(SIGTTOU, SIG_IGN);
-				      signal(SIGTTIN, SIG_IGN);
-				      signal(SIGTSTP, SIG_IGN);  
-				      signal(SIGINT, SIG_IGN);
-                      signal(SIGCHLD, SIG_IGN);
-
+                      signal(SIGCHLD, SIG_DFL);
                       tempJob->status=BACKGROUND;
                   }
                   tempJob = tempJob->next;
@@ -1309,10 +1306,14 @@ void sigchld_handler(int signum)
      int termstatus;
     if((ppid=waitpid(-1,&termstatus,WNOHANG|WUNTRACED))>0)
     {
-      if(WIFSTOPPED(termstatus))  stopJob(ppid,&termstatus);
+      if(WIFSTOPPED(termstatus))  
+        {
+          stopJob(ppid,&termstatus);
+
+        }
       else   delJob(ppid,&termstatus); 
     } 
-    tcsetpgrp(shell_terminal,shell_pgid);
+              
 }
 
 
